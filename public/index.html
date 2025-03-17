@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Claude Coding Assistant</title>
+    <title>Arlo Coding Assistant</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
     <style>
       body {
@@ -19,15 +19,70 @@
         padding: 20px;
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        display: flex;
+        flex-direction: column;
+        height: 90vh;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .model-badge {
+        background: #e0f2fe;
+        color: #0369a1;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .chat-history {
+        flex: 1;
+        overflow-y: auto;
+        margin: 15px 0;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #f8f9fa;
+      }
+      .message {
+        margin-bottom: 15px;
+        padding: 10px;
+        border-radius: 8px;
+        max-width: 85%;
+      }
+      .user-message {
+        background: #e0f2fe;
+        margin-left: auto;
+        color: #0369a1;
+      }
+      .assistant-message {
+        background: #f1f5f9;
+        margin-right: auto;
+      }
+      .thinking-message {
+        background: #f0f9ff;
+        border-left: 3px solid #0369a1;
+        font-family: monospace;
+        white-space: pre-wrap;
+        font-size: 0.9em;
+        color: #4b5563;
+        overflow-x: auto;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .input-area {
+        display: flex;
+        gap: 10px;
       }
       textarea {
-        width: 100%;
-        min-height: 100px;
-        margin: 10px 0;
+        flex: 1;
+        min-height: 60px;
         padding: 10px;
         border: 1px solid #ddd;
         border-radius: 4px;
         font-family: inherit;
+        resize: none;
       }
       button {
         background: #2563eb;
@@ -37,17 +92,12 @@
         border-radius: 4px;
         cursor: pointer;
         font-size: 16px;
+        height: fit-content;
+        align-self: flex-end;
       }
       button:disabled {
         background: #93c5fd;
         cursor: not-allowed;
-      }
-      #response {
-        margin-top: 20px;
-        padding: 20px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        background: #f8f9fa;
       }
       .error {
         color: #dc2626;
@@ -63,29 +113,100 @@
       code {
         font-family: 'Consolas', 'Monaco', monospace;
       }
+      .thinking-indicator {
+        display: inline-block;
+        margin-left: 5px;
+      }
+      .thinking-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: #4b5563;
+        margin-right: 3px;
+        animation: thinking 1.4s infinite ease-in-out both;
+      }
+      .thinking-dot:nth-child(1) {
+        animation-delay: -0.32s;
+      }
+      .thinking-dot:nth-child(2) {
+        animation-delay: -0.16s;
+      }
+      @keyframes thinking {
+        0%,
+        80%,
+        100% {
+          transform: scale(0);
+        }
+        40% {
+          transform: scale(1);
+        }
+      }
     </style>
   </head>
   <body>
     <div class="container">
-      <h1>Coding Assistant</h1>
-      <p>Ask any programming-related question:</p>
+      <div class="header">
+        <h1>Arlo Coding Assistant</h1>
+        <span class="model-badge">Extended Thinking Enabled</span>
+      </div>
 
-      <textarea
-        id="question"
-        placeholder="Example: How do I implement binary search in Python?"
-      ></textarea>
+      <div class="chat-history" id="chatHistory">
+        <!-- Chat messages will appear here -->
+      </div>
 
-      <button onclick="askClaude()" id="submitBtn">Submit</button>
-
-      <div id="response"></div>
+      <div class="input-area">
+        <textarea
+          id="question"
+          placeholder="Ask any programming-related question..."
+          onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }"
+        ></textarea>
+        <button onclick="sendMessage()" id="submitBtn">Send</button>
+      </div>
       <div id="error" class="error"></div>
     </div>
 
     <script>
-      async function askClaude() {
+      // Initialize chat history
+      let chatHistory = [];
+      let eventSource = null;
+      let currentThinkingDiv = null;
+      let currentResponseDiv = null;
+      let thinkingContent = '';
+      let responseContent = '';
+
+      // Function to add messages to chat UI
+      function addMessageToUI(content, type) {
+        const chatHistoryDiv = document.getElementById('chatHistory');
+        const messageDiv = document.createElement('div');
+
+        // Set class based on message type
+        if (type === 'user') {
+          messageDiv.className = 'message user-message';
+          messageDiv.textContent = content;
+        } else if (type === 'assistant') {
+          messageDiv.className = 'message assistant-message';
+          messageDiv.innerHTML = marked.parse(content);
+        } else if (type === 'thinking') {
+          messageDiv.className = 'message thinking-message';
+          messageDiv.innerHTML = content;
+        }
+
+        chatHistoryDiv.appendChild(messageDiv);
+        chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight;
+        return messageDiv;
+      }
+
+      function createThinkingIndicator() {
+        const thinkingHeader = document.createElement('div');
+        thinkingHeader.innerHTML =
+          '<strong>Thinking</strong><div class="thinking-indicator"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>';
+        return thinkingHeader;
+      }
+
+      async function sendMessage() {
         const question = document.getElementById('question').value;
         const submitBtn = document.getElementById('submitBtn');
-        const responseDiv = document.getElementById('response');
         const errorDiv = document.getElementById('error');
 
         if (!question.trim()) {
@@ -93,29 +214,107 @@
           return;
         }
 
+        // Add user message to chat
+        addMessageToUI(question, 'user');
+
+        // Clear input
+        document.getElementById('question').value = '';
+
         submitBtn.disabled = true;
         errorDiv.textContent = '';
-        responseDiv.innerHTML = 'Thinking...';
+
+        // Close any existing event source
+        if (eventSource) {
+          eventSource.close();
+        }
+
+        thinkingContent = '';
+        responseContent = '';
+
+        // Create initial thinking div with header
+        currentThinkingDiv = addMessageToUI(
+          createThinkingIndicator().outerHTML,
+          'thinking'
+        );
 
         try {
-          const response = await fetch('/api/ask', {
+          // Set up event source
+          const eventSourceURL = '/api/ask';
+          const response = await fetch(eventSourceURL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ question }),
+            body: JSON.stringify({
+              question,
+              history: chatHistory,
+            }),
           });
 
-          if (!response.ok) {
-            throw new Error(`Server error: ${response.status}`);
-          }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
 
-          const data = await response.json();
-          const markdownResponse = data.content[0].text;
-          responseDiv.innerHTML = marked.parse(markdownResponse);
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk
+              .split('\n\n')
+              .filter((line) => line.trim() !== '');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                  const parsedData = JSON.parse(data);
+
+                  // Handle thinking events
+                  if (parsedData.type === 'thinking_start') {
+                    // Thinking already started with div creation
+                  } else if (parsedData.type === 'thinking_delta') {
+                    thinkingContent += parsedData.content;
+                    currentThinkingDiv.innerHTML =
+                      createThinkingIndicator().outerHTML +
+                      '<div class="thinking-content">' +
+                      thinkingContent +
+                      '</div>';
+                  } else if (parsedData.type === 'thinking_stop') {
+                    // Keep the thinking content visible
+                  } else if (parsedData.type === 'text_delta') {
+                    // Handle response text
+                    if (!currentResponseDiv) {
+                      currentResponseDiv = addMessageToUI('', 'assistant');
+                    }
+                    responseContent += parsedData.content;
+                    currentResponseDiv.innerHTML =
+                      marked.parse(responseContent);
+                  } else if (parsedData.type === 'message_stop') {
+                    // Message is complete
+                    // Add to chat history
+                    chatHistory.push(
+                      { role: 'user', content: question },
+                      { role: 'assistant', content: responseContent }
+                    );
+                  } else if (parsedData.type === 'error') {
+                    errorDiv.textContent = `Error: ${parsedData.message}`;
+                    if (currentThinkingDiv) {
+                      currentThinkingDiv.remove();
+                    }
+                  }
+                } catch (e) {
+                  console.error('Error parsing event data:', e, data);
+                }
+              }
+            }
+          }
         } catch (error) {
           errorDiv.textContent = `Error: ${error.message}`;
-          responseDiv.textContent = '';
+          if (currentThinkingDiv) {
+            currentThinkingDiv.remove();
+          }
         } finally {
           submitBtn.disabled = false;
         }
