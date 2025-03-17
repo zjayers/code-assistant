@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
-const fetch = require('node-fetch');
+const axios = require('axios');
 
 // Load environment variables
 dotenv.config();
@@ -44,15 +44,16 @@ app.post('/api/ask', async (req, res) => {
       });
     }
 
-    // Make streaming request to Claude API
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
+    // Setup axios request
+    const response = await axios({
+      method: 'post',
+      url: 'https://api.anthropic.com/v1/messages',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': process.env.CLAUDE_API_KEY,
         'anthropic-version': '2023-01-01'
       },
-      body: JSON.stringify({
+      data: {
         model: 'claude-3-7-sonnet-20250219',
         max_tokens: 4000,
         stream: true,
@@ -61,25 +62,15 @@ app.post('/api/ask', async (req, res) => {
           budget_tokens: 2000
         },
         messages: apiMessages,
-        system: "You are Arlo, a helpful coding assistant with extended thinking capabilities. Provide detailed, accurate responses to programming questions. I prefer complete code I can copy and paste. I want exact answers, nothing made up. I want enterprise patterns that protect against all vulnerabilities. I always want correct error handling and semantic comments with usage examples. All code should follow correct Big O notation and be optimized for performance. All code should follow tested design patterns. Code is for life/death situations, you cannot make mistakes."
-      })
+        system: "You are Arlo, a helpful coding assistant with extended thinking capabilities. Provide detailed, accurate responses to programming questions. I prefer complete code I can copy and paste. I want exact answers, nothing made up. I want enterprise patterns that protect against all vulnerabilities. I always want correct error handling and semantic comments with usage examples."
+      },
+      responseType: 'stream'
     });
 
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status}`);
-    }
-
-    // Stream the response
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-
-    // Process stream chunks
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n\n').filter(line => line.trim() !== '');
+    // Handle the stream
+    response.data.on('data', (chunk) => {
+      const chunkStr = chunk.toString();
+      const lines = chunkStr.split('\n\n').filter(line => line.trim() !== '');
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {
@@ -115,11 +106,19 @@ app.post('/api/ask', async (req, res) => {
           }
         }
       }
-    }
+    });
 
-    res.end();
+    response.data.on('end', () => {
+      res.end();
+    });
+
+    response.data.on('error', (error) => {
+      console.error('Stream error:', error);
+      res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+      res.end();
+    });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
     res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
     res.end();
   }
