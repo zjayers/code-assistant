@@ -60,16 +60,14 @@
         background: #f1f5f9;
         margin-right: auto;
       }
-      .thinking-message {
+      .loading-message {
         background: #f0f9ff;
         border-left: 3px solid #0369a1;
-        font-family: monospace;
-        white-space: pre-wrap;
-        font-size: 0.9em;
+        font-family: inherit;
         color: #4b5563;
-        overflow-x: auto;
-        max-height: 200px;
-        overflow-y: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
       .input-area {
         display: flex;
@@ -113,26 +111,26 @@
       code {
         font-family: 'Consolas', 'Monaco', monospace;
       }
-      .thinking-indicator {
+      .loading-indicator {
         display: inline-block;
-        margin-left: 5px;
+        margin-left: 10px;
       }
-      .thinking-dot {
+      .loading-dot {
         display: inline-block;
-        width: 6px;
-        height: 6px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         background-color: #4b5563;
-        margin-right: 3px;
-        animation: thinking 1.4s infinite ease-in-out both;
+        margin-right: 5px;
+        animation: loading 1.4s infinite ease-in-out both;
       }
-      .thinking-dot:nth-child(1) {
+      .loading-dot:nth-child(1) {
         animation-delay: -0.32s;
       }
-      .thinking-dot:nth-child(2) {
+      .loading-dot:nth-child(2) {
         animation-delay: -0.16s;
       }
-      @keyframes thinking {
+      @keyframes loading {
         0%,
         80%,
         100% {
@@ -148,7 +146,7 @@
     <div class="container">
       <div class="header">
         <h1>Arlo Coding Assistant</h1>
-        <span class="model-badge">Extended Thinking Enabled</span>
+        <span class="model-badge">Claude 3.7 Sonnet</span>
       </div>
 
       <div class="chat-history" id="chatHistory">
@@ -169,11 +167,7 @@
     <script>
       // Initialize chat history
       let chatHistory = [];
-      let eventSource = null;
-      let currentThinkingDiv = null;
-      let currentResponseDiv = null;
-      let thinkingContent = '';
-      let responseContent = '';
+      let loadingMessageDiv = null;
 
       // Function to add messages to chat UI
       function addMessageToUI(content, type) {
@@ -187,8 +181,8 @@
         } else if (type === 'assistant') {
           messageDiv.className = 'message assistant-message';
           messageDiv.innerHTML = marked.parse(content);
-        } else if (type === 'thinking') {
-          messageDiv.className = 'message thinking-message';
+        } else if (type === 'loading') {
+          messageDiv.className = 'message loading-message';
           messageDiv.innerHTML = content;
         }
 
@@ -197,11 +191,8 @@
         return messageDiv;
       }
 
-      function createThinkingIndicator() {
-        const thinkingHeader = document.createElement('div');
-        thinkingHeader.innerHTML =
-          '<strong>Thinking</strong><div class="thinking-indicator"><span class="thinking-dot"></span><span class="thinking-dot"></span><span class="thinking-dot"></span></div>';
-        return thinkingHeader;
+      function createLoadingIndicator() {
+        return `<div>Generating response<div class="loading-indicator"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span></div></div>`;
       }
 
       async function sendMessage() {
@@ -220,27 +211,16 @@
         // Clear input
         document.getElementById('question').value = '';
 
+        // Disable submit button and clear errors
         submitBtn.disabled = true;
         errorDiv.textContent = '';
 
-        // Close any existing event source
-        if (eventSource) {
-          eventSource.close();
-        }
-
-        thinkingContent = '';
-        responseContent = '';
-
-        // Create initial thinking div with header
-        currentThinkingDiv = addMessageToUI(
-          createThinkingIndicator().outerHTML,
-          'thinking'
-        );
+        // Show loading indicator
+        loadingMessageDiv = addMessageToUI(createLoadingIndicator(), 'loading');
 
         try {
-          // Set up event source
-          const eventSourceURL = '/api/ask';
-          const response = await fetch(eventSourceURL, {
+          // Send the request to the API
+          const response = await fetch('/api/ask', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -251,69 +231,39 @@
             }),
           });
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            const lines = chunk
-              .split('\n\n')
-              .filter((line) => line.trim() !== '');
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data === '[DONE]') continue;
-
-                try {
-                  const parsedData = JSON.parse(data);
-
-                  // Handle thinking events
-                  if (parsedData.type === 'thinking_start') {
-                    // Thinking already started with div creation
-                  } else if (parsedData.type === 'thinking_delta') {
-                    thinkingContent += parsedData.content;
-                    currentThinkingDiv.innerHTML =
-                      createThinkingIndicator().outerHTML +
-                      '<div class="thinking-content">' +
-                      thinkingContent +
-                      '</div>';
-                  } else if (parsedData.type === 'thinking_stop') {
-                    // Keep the thinking content visible
-                  } else if (parsedData.type === 'text_delta') {
-                    // Handle response text
-                    if (!currentResponseDiv) {
-                      currentResponseDiv = addMessageToUI('', 'assistant');
-                    }
-                    responseContent += parsedData.content;
-                    currentResponseDiv.innerHTML =
-                      marked.parse(responseContent);
-                  } else if (parsedData.type === 'message_stop') {
-                    // Message is complete
-                    // Add to chat history
-                    chatHistory.push(
-                      { role: 'user', content: question },
-                      { role: 'assistant', content: responseContent }
-                    );
-                  } else if (parsedData.type === 'error') {
-                    errorDiv.textContent = `Error: ${parsedData.message}`;
-                    if (currentThinkingDiv) {
-                      currentThinkingDiv.remove();
-                    }
-                  }
-                } catch (e) {
-                  console.error('Error parsing event data:', e, data);
-                }
-              }
-            }
+          // Remove loading message
+          if (loadingMessageDiv) {
+            loadingMessageDiv.remove();
+            loadingMessageDiv = null;
           }
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(
+              errorData.error || 'Error connecting to the server'
+            );
+          }
+
+          const data = await response.json();
+
+          // Get the text content from the response
+          const content = data.content[0].text;
+
+          // Add the assistant's response to the chat
+          addMessageToUI(content, 'assistant');
+
+          // Add to chat history
+          chatHistory.push(
+            { role: 'user', content: question },
+            { role: 'assistant', content: content }
+          );
         } catch (error) {
           errorDiv.textContent = `Error: ${error.message}`;
-          if (currentThinkingDiv) {
-            currentThinkingDiv.remove();
+
+          // Remove loading message if there was an error
+          if (loadingMessageDiv) {
+            loadingMessageDiv.remove();
+            loadingMessageDiv = null;
           }
         } finally {
           submitBtn.disabled = false;
